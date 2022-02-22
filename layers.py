@@ -38,6 +38,40 @@ class Embedding(nn.Module):
 
         return emb
 
+# Embedding with character enconding.
+class Embedding_CW(nn.Module):
+    def __init__(self, word_vectors, char_vectors, hidden_size, drop_prob, char_channel_size, char_channel_width):
+        super(Embedding_CW, self).__init__()
+        self.drop_prob = drop_prob
+        self.charEmbed = nn.Embedding.from_pretrained(char_vectors)
+        self.wordEmbed = nn.Embedding.from_pretrained(word_vectors)
+        self.wordProj = nn.Linear(word_vectors.size(1), hidden_size - char_channel_size, bias=False)
+        self.charProj = nn.Sequential(
+            nn.Conv1d(char_vectors.size(1), char_channel_size, char_channel_width),
+            nn.ReLU(),
+            nn.AdaptiveMaxPool1d(1)
+        )
+        self.hwy = HighwayEncoder_CW(2, hidden_size)
+    
+    def forward(self, xw, xc):
+        # Character embedding
+        emb_c = self.charEmbed(xc) # (batch_size, seq_len, word_len, char_dim)
+        batch_size, _, word_len, char_dim = emb_c.size()
+        emb_c = F.dropout(emb_c, self.drop_prob, self.training)
+        emb_c = emb_c.transpose(2, 3) # (batch_size, seq_len, char_dim, word_len)
+        emb_c = emb_c.view(-1, char_dim, word_len) # (batch_size * seq_len, char_dim, word_len)
+        emb_c = self.charProj(emb_c).squeeze() # (batch_size * seq_len, char_channel_size)
+        emb_c = emb_c.view(batch_size, -1, emb_c.size(1)) # (batch_size, seq_len, char_channel_size)
+
+        # Word embedding
+        emb_w = self.wordEmbed(xw)# (batch_size, seq_len, word_dim)
+        emb_w = F.dropout(emb_w, self.drop_prob, self.training)
+        emb_w = self.wordProj(emb_w) # (batch_size, seq_len, hidden_size - char_channel_size)
+
+        # Highway
+        emb = self.hwy(emb_c, emb_w) # (batch_size, seq_len, hidden_size)
+
+        return emb
 
 class HighwayEncoder(nn.Module):
     """Encode an input sequence using a highway network.
@@ -67,6 +101,24 @@ class HighwayEncoder(nn.Module):
 
         return x
 
+# Highway with character encoding.
+class HighwayEncoder_CW(nn.Module):
+    def __init__(self, num_layers, hidden_size):
+        super(HighwayEncoder_CW, self).__init__()
+        self.transforms = nn.ModuleList([nn.Linear(hidden_size, hidden_size)
+                                         for _ in range(num_layers)])
+        self.gates = nn.ModuleList([nn.Linear(hidden_size, hidden_size)
+                                    for _ in range(num_layers)])
+    
+    def forward(self, x1, x2):
+        x = torch.cat((x1, x2), dim=-1)
+        for gate, transform in zip(self.gates, self.transforms):
+            # Shapes of g, t, and x are all (batch_size, seq_len, hidden_size)
+            g = torch.sigmoid(gate(x))
+            t = F.relu(transform(x))
+            x = g * t + (1 - g) * x
+
+        return x
 
 class RNNEncoder(nn.Module):
     """General-purpose layer for encoding a sequence using a bidirectional RNN.
