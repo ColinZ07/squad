@@ -118,9 +118,9 @@ def main(args):
                 # log_p1, log_p2 = model(cw_idxs, cc_idxs, qw_idxs, qc_idxs)
                 p1, p2 = model(cw_idxs, cc_idxs, qw_idxs, qc_idxs)
                 y1, y2 = y1.to(device), y2.to(device)
-                # log_p1 = torch.log(p1)
-                # log_p2 = torch.log(p2)
-                loss = F.nll_loss(p1, y1) + F.nll_loss(p2, y2)
+                log_p1 = F.log_softmax(p1, -1)
+                log_p2 = F.log_softmax(p2, -1)
+                loss = F.nll_loss(log_p1, y1) + F.nll_loss(log_p2, y2)
                 loss_val = loss.item()
 
                 # Backward
@@ -192,9 +192,9 @@ def evaluate(model, data_loader, device, eval_file, max_len, use_squad_v2):
             # log_p1, log_p2 = model(cw_idxs, cc_idxs, qw_idxs, qc_idxs)
             p1, p2 = model(cw_idxs, cc_idxs, qw_idxs, qc_idxs)
             y1, y2 = y1.to(device), y2.to(device)
-            # log_p1 = torch.log(p1)
-            # log_p2 = torch.log(p2)
-            loss = F.nll_loss(p1, y1) + F.nll_loss(p2, y2)
+            log_p1 = F.log_softmax(p1, -1)
+            log_p2 = F.log_softmax(p2, -1)
+            loss = F.nll_loss(log_p1, y1) + F.nll_loss(log_p2, y2)
             nll_meter.update(loss.item(), batch_size)
 
             # Get F1 and EM scores
