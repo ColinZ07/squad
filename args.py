@@ -238,6 +238,10 @@ def add_train_test_args(parser):
                         type=int,
                         default=10,
                         help='Number of examples to visualize in TensorBoard.')
+    parser.add_argument('--num_heads',
+                        type=int,
+                        default=4,
+                        help='Number of heads for multi-head attention.')
     parser.add_argument('--load_path',
                         type=str,
                         default=None,
