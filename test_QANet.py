@@ -21,7 +21,8 @@ import util
 from args import get_test_args
 from collections import OrderedDict
 from json import dumps
-from models import BiDAF
+from model_QANet import QANet
+# from models import BiDAF
 from os.path import join
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
