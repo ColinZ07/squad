@@ -21,8 +21,7 @@ import util
 from args import get_test_args
 from collections import OrderedDict
 from json import dumps
-from model_QANet import QANet
-# from models import BiDAF
+from models import BiDAF
 from os.path import join
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
@@ -40,12 +39,20 @@ def main(args):
 
     # Get embeddings
     log.info('Loading embeddings...')
-    word_vectors = util.torch_from_json(args.word_emb_file)
+    word_mat = util.torch_from_json(args.word_emb_file)
+    char_mat = util.torch_from_json(args.char_emb_file)
+
+    # param preparation:
+    c_max_len = 400 # setup_args.para_limit
+    q_max_len = 50 # setup_args.ques_limit
+    d_model = args.hidden_size
 
     # Get model
     log.info('Building model...')
-    model = BiDAF(word_vectors=word_vectors,
-                  hidden_size=args.hidden_size)
+    model = QANet(word_mat, char_mat, c_max_len, q_max_len, d_model,
+                  train_cemb=False, pad=0,
+                  dropout=args.drop_prob, num_head=1)
+
     model = nn.DataParallel(model, gpu_ids)
     log.info(f'Loading checkpoint from {args.load_path}...')
     model = util.load_model(model, args.load_path, gpu_ids, return_step=False)
@@ -75,12 +82,17 @@ def main(args):
         for cw_idxs, cc_idxs, qw_idxs, qc_idxs, y1, y2, ids in data_loader:
             # Setup for forward
             cw_idxs = cw_idxs.to(device)
+            cc_idxs = cc_idxs.to(device)
             qw_idxs = qw_idxs.to(device)
+            qc_idxs = qc_idxs.to(device)
             batch_size = cw_idxs.size(0)
 
             # Forward
-            log_p1, log_p2 = model(cw_idxs, qw_idxs)
+            # log_p1, log_p2 = model(cw_idxs, cc_idxs, qw_idxs, qc_idxs)
+            p1, p2 = model(cw_idxs, cc_idxs, qw_idxs, qc_idxs)
             y1, y2 = y1.to(device), y2.to(device)
+            log_p1 = F.log_softmax(p1, -1)
+            log_p2 = F.log_softmax(p2, -1)
             loss = F.nll_loss(log_p1, y1) + F.nll_loss(log_p2, y2)
             nll_meter.update(loss.item(), batch_size)
 
