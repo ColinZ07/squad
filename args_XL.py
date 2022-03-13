@@ -155,8 +155,6 @@ def get_train_args():
     parser.add_argument('--lr_warm_up_num',
                         default=1000, type=int,
                         help='number of warm-up steps of learning rate')
-    parser.add_argument('--mem_len', type=int, default=256,
-                        help='length of the retained previous heads')
     parser.add_argument('--init', default='normal', type=str,
                         help='parameter initializer to use.')
     parser.add_argument('--emb_init', default='normal', type=str,
@@ -248,6 +246,10 @@ def add_train_test_args(parser):
                         type=int,
                         default=15,
                         help='Maximum length of a predicted answer.')
+    parser.add_argument('--batch_chunk',
+                        type=int,
+                        default=8,
+                        help='split batch into chunks')
     parser.add_argument('--d_head',
                         default=16, type=int,
                         help='attention num head')
