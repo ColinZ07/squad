@@ -115,19 +115,54 @@ def main(args):
         with torch.enable_grad(), \
                 tqdm(total=len(train_loader.dataset)) as progress_bar:
             for cw_idxs, cc_idxs, qw_idxs, qc_idxs, y1, y2, ids in train_loader:
-                # Setup for forward
+                    # Setup for forward
+                if args.batch_chunk > 1:
+                    mems = [(tuple(), tuple(), tuple()) for _ in range(args.batch_chunk)]
+                else:
+                    mems = (tuple(), tuple(), tuple())
+
                 cw_idxs = cw_idxs.to(device)
                 qw_idxs = qw_idxs.to(device)
-
                 cc_idxs = cc_idxs.to(device)
                 qc_idxs = qc_idxs.to(device)
-                
+
                 batch_size = cw_idxs.size(0)
-                optimizer.zero_grad()
 
                 # Forward
-                log_p1, log_p2, mems = model(cw_idxs, cc_idxs, qw_idxs, qc_idxs, *mems)
+                if args.batch_chunk > 1:
+                  p1 = []
+                  p2 = []
+                  
+                  cw_idxs_chunks = torch.chunk(cw_idxs, args.batch_chunk, 1)
+                  cc_idxs_chunks = torch.chunk(cc_idxs, args.batch_chunk, 1)
+                  qw_idxs_chunks = torch.chunk(qw_idxs, args.batch_chunk, 1)
+                  qc_idxs_chunks = torch.chunk(qc_idxs, args.batch_chunk, 1)
+
+                  # target_chunks = torch.chunk(target, args.batch_chunk, 1)
+                  for i in range(args.batch_chunk):
+                      data_i = data_chunks[i].contiguous()
+                      cw_idxs_i = cw_idxs_chunks[i].contiguous()
+                      cc_idxs_i = cc_idxs_chunks[i].contiguous()
+                      qw_idxs_i = qw_idxs_chunks[i].contiguous()
+                      qc_idxs_i = qc_idxs_chunks[i].contiguous()
+
+                      target_i = target_chunks[i].contiguous()
+                      p1_i, p2_i, mems[i] = model(cw_idxs_i, cc_idxs_i, qw_idxs_i, qc_idxs_i, *mems[i])
+
+                      p1.append(p1_i)
+                      p2.append(p2_i)
+
+                  p1 = torch.stack(p1_i)
+                  p2 = torch.stack(p2_i)
+
+                else:
+                  p1, p2, mems = model(cw_idxs, cc_idxs, qw_idxs, qc_idxs, *mems)
+                
                 y1, y2 = y1.to(device), y2.to(device)
+
+                log_p1 = F.log_softmax(p1, dim=1)
+                log_p2 = F.log_softmax(p2, dim=1)  
+
                 loss = F.nll_loss(log_p1, y1) + F.nll_loss(log_p2, y2)
                 loss_val = loss.item()
 
