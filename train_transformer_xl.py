@@ -19,7 +19,7 @@ from args import get_train_args
 from collections import OrderedDict
 from json import dumps
 # from models import BiDAF
-from model_QANet import QANet
+from model_transformer_xl import QANet
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 from ujson import load as json_load
@@ -48,17 +48,96 @@ def main(args):
     char_mat = util.torch_from_json(args.char_emb_file)
 
 
-    # param preparation:
-    c_max_len = 400 # setup_args.para_limit
-    q_max_len = 50 # setup_args.ques_limit
-    d_model = args.hidden_size
+    ###############################################################################
+    # Build the model
+    ###############################################################################
+    def init_weight(weight):
+        if args.init == 'uniform':
+            nn.init.uniform_(weight, -args.init_range, args.init_range)
+        elif args.init == 'normal':
+            nn.init.normal_(weight, 0.0, args.init_std)
 
-    # Get model
-    log.info('Building model...')
-    model = QANet(word_mat, char_mat, c_max_len, q_max_len, d_model,
-                  train_cemb=False, pad=0,
-                  dropout=args.drop_prob, num_head=args.num_heads)
+    def init_bias(bias):
+        nn.init.constant_(bias, 0.0)
+
+    def weights_init(m):
+        classname = m.__class__.__name__
+        if classname.find('Linear') != -1:
+            if hasattr(m, 'weight') and m.weight is not None:
+                init_weight(m.weight)
+            if hasattr(m, 'bias') and m.bias is not None:
+                init_bias(m.bias)
+        elif classname.find('AdaptiveEmbedding') != -1:
+            if hasattr(m, 'emb_projs'):
+                for i in range(len(m.emb_projs)):
+                    if m.emb_projs[i] is not None:
+                        nn.init.normal_(m.emb_projs[i], 0.0, args.proj_init_std)
+        elif classname.find('Embedding') != -1:
+            if hasattr(m, 'weight'):
+                init_weight(m.weight)
+        elif classname.find('ProjectedAdaptiveLogSoftmax') != -1:
+            if hasattr(m, 'cluster_weight') and m.cluster_weight is not None:
+                init_weight(m.cluster_weight)
+            if hasattr(m, 'cluster_bias') and m.cluster_bias is not None:
+                init_bias(m.cluster_bias)
+            if hasattr(m, 'out_projs'):
+                for i in range(len(m.out_projs)):
+                    if m.out_projs[i] is not None:
+                        nn.init.normal_(m.out_projs[i], 0.0, args.proj_init_std)
+        elif classname.find('LayerNorm') != -1:
+            if hasattr(m, 'weight'):
+                nn.init.normal_(m.weight, 1.0, args.init_std)
+            if hasattr(m, 'bias') and m.bias is not None:
+                init_bias(m.bias)
+        elif classname.find('TransformerLM') != -1:
+            if hasattr(m, 'r_emb'):
+                init_weight(m.r_emb)
+            if hasattr(m, 'r_w_bias'):
+                init_weight(m.r_w_bias)
+            if hasattr(m, 'r_r_bias'):
+                init_weight(m.r_r_bias)
+            if hasattr(m, 'r_bias'):
+                init_bias(m.r_bias)
+
+    def update_dropout(m):
+        classname = m.__class__.__name__
+        if classname.find('Dropout') != -1:
+            if hasattr(m, 'p'):
+                m.p = args.dropout
+
+    def update_dropatt(m):
+        if hasattr(m, 'dropatt'):
+            m.dropatt.p = args.dropatt
+
+    ntokens = word_mat.size(0)
+    args.tied = not args.not_tied
+    tie_projs=False
+    cutoffs = []
+
+    model = MemTransformerLM(word_mat, char_mat, ntokens, args.n_layer, args.n_head, args.d_model_xl,
+        args.d_head, args.d_inner, args.drop_prob, args.dropatt,
+        tie_weight=args.tied, d_embed=args.d_embed, div_val=args.div_val,
+        tie_projs=tie_projs, pre_lnorm=args.pre_lnorm, tgt_len=args.tgt_len,
+        ext_len=args.ext_len, mem_len=args.mem_len, cutoffs=cutoffs,
+        same_length=args.same_length, attn_type=args.attn_type,
+        clamp_len=args.clamp_len, sample_softmax=args.sample_softmax)
+    model.apply(weights_init)
+    model.word_emb.apply(weights_init)
+
     model = nn.DataParallel(model, args.gpu_ids)
+
+    # # param preparation:
+    # c_max_len = 400 # setup_args.para_limit
+    # q_max_len = 50 # setup_args.ques_limit
+    # d_model = args.hidden_size
+
+    # # Get model
+    # log.info('Building model...')
+    # model = QANet(word_mat, char_mat, c_max_len, q_max_len, d_model,
+    #               train_cemb=False, pad=0,
+    #               dropout=args.drop_prob, num_head=args.num_heads)
+    # model = nn.DataParallel(model, args.gpu_ids)
+
     if args.load_path:
         log.info(f'Loading checkpoint from {args.load_path}...')
         model, step = util.load_model(model, args.load_path, args.gpu_ids)
@@ -99,6 +178,11 @@ def main(args):
     log.info('Training...')
     steps_till_eval = args.eval_steps
     epoch = step // len(train_dataset)
+
+    if args.batch_chunk > 1:
+        mems = [tuple() for _ in range(args.batch_chunk)]
+    else:
+        mems = tuple()
     while epoch != args.num_epochs:
         epoch += 1
         log.info(f'Starting epoch {epoch}...')
@@ -115,12 +199,23 @@ def main(args):
                 optimizer.zero_grad()
 
                 # Forward
+                # log_p1, log_p2 = model(cw_idxs, cc_idxs, qw_idxs, qc_idxs)
                 p1, p2 = model(cw_idxs, cc_idxs, qw_idxs, qc_idxs)
                 y1, y2 = y1.to(device), y2.to(device)
                 log_p1 = F.log_softmax(p1, -1)
                 log_p2 = F.log_softmax(p2, -1)
                 loss = F.nll_loss(log_p1, y1) + F.nll_loss(log_p2, y2)
                 loss_val = loss.item()
+
+
+                #Forward:
+                ret = model(cw_idxs, cc_idxs, qw_idxs, qc_idxs, y1, y2, *mems)
+                loss, mems = ret[0], ret[1:]
+                loss = loss.float().mean().type_as(loss)
+
+                loss.backward()
+
+
 
                 # Backward
                 loss.backward()
@@ -154,7 +249,6 @@ def main(args):
                     ema.resume(model)
 
                     # Log to console
-                    log.info("results:", results)
                     results_str = ', '.join(f'{k}: {v:05.2f}' for k, v in results.items())
                     log.info(f'Dev {results_str}')
 

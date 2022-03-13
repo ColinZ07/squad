@@ -144,15 +144,6 @@ def get_train_args():
     parser.add_argument('--d_inner',
                         default=512, type=int,
                         help='model hidden size/filter size')    
-    parser.add_argument('--num_head',
-                        default=8, type=int,
-                        help='attention num head')
-    parser.add_argument('--d_head',
-                        default=16, type=int,
-                        help='attention num head')
-    parser.add_argument('--pretrained_char',
-                        default=False, action='store_true',
-                        help='whether train char embedding or not')
     parser.add_argument('--para_limit',
                         type=int,
                         default=400,
@@ -257,6 +248,17 @@ def add_train_test_args(parser):
                         type=int,
                         default=15,
                         help='Maximum length of a predicted answer.')
+    parser.add_argument('--d_head',
+                        default=16, type=int,
+                        help='attention num head')
+    parser.add_argument('--mem_len', type=int, default=256,
+                        help='length of the retained previous heads')
+    parser.add_argument('--num_head',
+                        default=8, type=int,
+                        help='attention num head')
+    parser.add_argument('--pretrained_char',
+                        default=False, action='store_true',
+                        help='whether train char embedding or not')
     parser.add_argument('--num_workers',
                         type=int,
                         default=4,
