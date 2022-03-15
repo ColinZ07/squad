@@ -135,25 +135,19 @@ def main(args):
                   
                   cw_idxs_chunks = torch.chunk(cw_idxs, args.batch_chunk, 1)
                   cc_idxs_chunks = torch.chunk(cc_idxs, args.batch_chunk, 1)
-                  qw_idxs_chunks = torch.chunk(qw_idxs, args.batch_chunk, 1)
-                  qc_idxs_chunks = torch.chunk(qc_idxs, args.batch_chunk, 1)
 
                   # target_chunks = torch.chunk(target, args.batch_chunk, 1)
                   for i in range(args.batch_chunk):
-                      data_i = data_chunks[i].contiguous()
                       cw_idxs_i = cw_idxs_chunks[i].contiguous()
                       cc_idxs_i = cc_idxs_chunks[i].contiguous()
-                      qw_idxs_i = qw_idxs_chunks[i].contiguous()
-                      qc_idxs_i = qc_idxs_chunks[i].contiguous()
 
-                      target_i = target_chunks[i].contiguous()
-                      p1_i, p2_i, mems[i] = model(cw_idxs_i, cc_idxs_i, qw_idxs_i, qc_idxs_i, *mems[i])
+                      p1_i, p2_i, mems[i] = model(cw_idxs_i, cc_idxs_i, qw_idxs, qc_idxs, *mems[i])
 
                       p1.append(p1_i)
                       p2.append(p2_i)
 
-                  p1 = torch.stack(p1_i)
-                  p2 = torch.stack(p2_i)
+                  p1 = torch.cat(p1, dim=1)
+                  p2 = torch.cat(p2, dim=1)
 
                 else:
                   p1, p2, mems = model(cw_idxs, cc_idxs, qw_idxs, qc_idxs, *mems)
@@ -226,10 +220,7 @@ def evaluate(model, data_loader, device, eval_file, max_len, use_squad_v2, args)
             tqdm(total=len(data_loader.dataset)) as progress_bar:
         for cw_idxs, cc_idxs, qw_idxs, qc_idxs, y1, y2, ids in data_loader:
             # Setup for forward
-            if args.batch_chunk > 1:
-                mems = [(tuple(), tuple(), tuple()) for _ in range(args.batch_chunk)]
-            else:
-                mems = (tuple(), tuple(), tuple())
+            mems = (tuple(), tuple(), tuple())
 
             cw_idxs = cw_idxs.to(device)
             qw_idxs = qw_idxs.to(device)
@@ -245,26 +236,19 @@ def evaluate(model, data_loader, device, eval_file, max_len, use_squad_v2, args)
               
               cw_idxs_chunks = torch.chunk(cw_idxs, args.batch_chunk, 1)
               cc_idxs_chunks = torch.chunk(cc_idxs, args.batch_chunk, 1)
-              qw_idxs_chunks = torch.chunk(qw_idxs, args.batch_chunk, 1)
-              qc_idxs_chunks = torch.chunk(qc_idxs, args.batch_chunk, 1)
 
               # target_chunks = torch.chunk(target, args.batch_chunk, 1)
               for i in range(args.batch_chunk):
-                  data_i = data_chunks[i].contiguous()
                   cw_idxs_i = cw_idxs_chunks[i].contiguous()
                   cc_idxs_i = cc_idxs_chunks[i].contiguous()
-                  qw_idxs_i = qw_idxs_chunks[i].contiguous()
-                  qc_idxs_i = qc_idxs_chunks[i].contiguous()
 
-
-                  target_i = target_chunks[i].contiguous()
-                  p1_i, p2_i, mems[i] = model(cw_idxs_i, cc_idxs_i, qw_idxs_i, qc_idxs_i, *mems[i])
+                  p1_i, p2_i, mems = model(cw_idxs_i, cc_idxs_i, qw_idxs, qc_idxs, *mems)
 
                   p1.append(p1_i)
                   p2.append(p2_i)
 
-              p1 = torch.stack(p1_i)
-              p2 = torch.stack(p2_i)
+              p1 = torch.cat(p1, dim=1)
+              p2 = torch.cat(p2, dim=1)
 
             else:
               p1, p2, mems = model(cw_idxs, cc_idxs, qw_idxs, qc_idxs, *mems)
